@@ -206,12 +206,18 @@ float R2 = 14860.0;
 float vout;
 float vin;
 
+#define alpha 0.4
+int adc_filtradov = 0;
+int adc_filtradot = 0;
+int adc_filtradoi = 0;
+
 int Counter = 0, LastCount = 0;
 
 int pagina = 0;
 
 Adafruit_ST7735 tft = Adafruit_ST7735(TFT_CS, TFT_DC, TFT_RST);
 Adafruit_ADS1115 ads;
+void RotaryChanged();
 RotaryEncoder Rotary(&RotaryChanged, DT1, CLK1, SW); // Pins 2 (DT), 3 (CLK), 4 (SW)
 Buzzer buzzer(BUZZ);
 
@@ -236,96 +242,6 @@ const int numSamples = 10;  // Número de muestras a promediar
 int16_t samples[numSamples];
 int sampleIndex = 0;
 float sum = 0.0; 
-
-////////////////////////////////////////////////////////////////////////////////////////
-//      |FUNCIONES GENERALES|
-////////////////////////////////////////////////////////////////////////////////////////
-
-void setup() {
-
-  Serial.begin(9600);
-
-  tft.initR(INITR_BLACKTAB);
-
-  tft.setFont();
-  tft.setRotation(3);
-  tft.setTextWrap(false);
-
-  tft.fillScreen(ST7735_BLACK);
-  tft.drawBitmap(30, 14, logo_icon, 100, 100, ST7735_WHITE);
-
-  ads.begin();
-
-  /*
-    buzzer.begin(100);
-    buzzer.sound(NOTE_D7, 180);
-    buzzer.sound(NOTE_A6, 180);
-    buzzer.sound(NOTE_C7, 170);
-    buzzer.sound(NOTE_B6, 150);
-    buzzer.sound(NOTE_E7, 130);
-    buzzer.end(100);
-  */
-
-  delay(2000);
-  tft.fillScreen(ST7735_BLACK);
-
-  pinMode(lm35pin, INPUT);
-  pinMode(MulCap, OUTPUT);
-  pinMode(OnOff, INPUT_PULLUP);
-  pinMode(Vent, OUTPUT);
-  pinMode(Out, OUTPUT);
-  pinMode(BUZZ, OUTPUT);
-  
-  digitalWrite(Out, HIGH);
-  digitalWrite(MulCap, LOW);
-  digitalWrite(Vent, LOW);
-
-  Rotary.setup();
-
-  //melodiaInicio();
-
-}
-
-void loop() {
-
-  Serial.println(duty);
-
-  tft.setFont();
-  tft.setRotation(3);
-  tft.setTextWrap(false);
-
-  if (LastCount != POSICION) {
-    LastCount = POSICION;
-  }
-
-  rotulo();
-  bitmaps();
-  temperatura();
-  pulsadores();
-
-  switch (pagina) {
-    case 0:
-      if (digitalRead(OnOff) == HIGH) {
-        digitalWrite(Out, HIGH);
-      }
-      else {
-        digitalWrite(Out, LOW);
-      }
-      voltajeColor();
-      corrienteColor();
-      potenciaColor();
-      tft.drawLine(0, 33, 160, 33, ST7735_CYAN);
-      voltajeCuenta();
-      corrienteCuenta();
-      break;
-
-    case 1:
-      voltajeCuenta();
-      corrienteCuenta();
-      PWM();
-      break;
-  }
-}
 
 ////////////////////////////////////////////////////////////////////////////////////////
 //      |FUNCIONES PERSONALIZADAS|
@@ -364,9 +280,10 @@ void pulsadores() {
 }
 
 void temperatura() {
-  
+
   float temp = analogRead(lm35pin);
-  temperature = (V5 * temp * 100.0) / 1024;
+  adc_filtradot = (alpha*temp) + ((1-alpha)*adc_filtradot);
+  temperature = (V5 * adc_filtradot * 100.0) / 1024;
 
   float tempCurve = temperature * 3.375;
   tempPorc = 3.333 * (temperature - 45);
@@ -488,7 +405,8 @@ void voltajeColor() {
   tft.setTextColor(ST7735_GREEN, ST7735_BLACK);
   tft.setCursor(9, 6);
   tft.print("V:");
-  tft.println(vin, vDec);
+  tft.print(vin, 3);
+  if(vin <= 9.999) tft.println("0");
 
 }
 
@@ -522,32 +440,26 @@ void voltajeCuenta() {
 
   ads.setGain(GAIN_ONE);
   float multiplier1 = 0.000125F;
-
   float results1 = ads.readADC_SingleEnded(0);
-  vout = results1 * multiplier1;
+  
+  adc_filtradov = (alpha*results1) + ((1-alpha)*adc_filtradov);
+
+  vout = adc_filtradov * multiplier1;
   vin = vout / 0.1108458;
 
   if (vin <= 0) vin = 0;
-  if (vin <= 9.999) vDec = 4;
-  else vDec = 3;
 
 }
 
 void corrienteCuenta() {
 
   ads.setGain(GAIN_SIXTEEN);
-  
-  int16_t adc0 = ads.readADC_SingleEnded(1);  
-  sum = sum - samples[sampleIndex] + adc0;
-  samples[sampleIndex] = adc0;
-  sampleIndex = (sampleIndex + 1) % numSamples;  // Circular el índice
-
-  // Calcular el promedio de las muestras
-  float averagedValue = sum / numSamples;
-  
   float multiplier = 0.0000078125F;
-  float voltage = averagedValue * multiplier;
-  Idc = voltage / 0.0137;
+  float adc0 = ads.readADC_SingleEnded(1);  
+  adc_filtradoi = (alpha*adc0) + ((1-alpha)*adc_filtradoi);
+  
+  float voltage = adc_filtradoi * multiplier;
+  Idc = voltage / 0.0139;
 
   if (Idc <= 0) Idc = 0;
   if (Idc <= 9.999) iDec = 4;
@@ -632,4 +544,94 @@ void melodiaInicio() {
   buzzer.sound(NOTE_C7, 60);
   buzzer.sound(NOTE_G7, 100);
   buzzer.end(100);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+//      |FUNCIONES GENERALES|
+////////////////////////////////////////////////////////////////////////////////////////
+
+void setup() {
+
+  Serial.begin(9600);
+
+  tft.initR(INITR_BLACKTAB);
+
+  tft.setFont();
+  tft.setRotation(1);
+  tft.setTextWrap(false);
+
+  tft.fillScreen(ST7735_BLACK);
+  tft.drawBitmap(30, 14, logo_icon, 100, 100, ST7735_WHITE);
+
+  ads.begin();
+
+  /*
+    buzzer.begin(100);
+    buzzer.sound(NOTE_D7, 180);
+    buzzer.sound(NOTE_A6, 180);
+    buzzer.sound(NOTE_C7, 170);
+    buzzer.sound(NOTE_B6, 150);
+    buzzer.sound(NOTE_E7, 130);
+    buzzer.end(100);
+  */
+
+  delay(2000);
+  tft.fillScreen(ST7735_BLACK);
+
+  pinMode(lm35pin, INPUT);
+  pinMode(MulCap, OUTPUT);
+  pinMode(OnOff, INPUT_PULLUP);
+  pinMode(Vent, OUTPUT);
+  pinMode(Out, OUTPUT);
+  pinMode(BUZZ, OUTPUT);
+  
+  digitalWrite(Out, HIGH);
+  digitalWrite(MulCap, LOW);
+  digitalWrite(Vent, LOW);
+
+  Rotary.setup();
+
+  //melodiaInicio();
+
+}
+
+void loop() {
+
+  Serial.println(duty);
+
+  tft.setFont();
+  tft.setRotation(1);
+  tft.setTextWrap(false);
+
+  if (LastCount != POSICION) {
+    LastCount = POSICION;
+  }
+
+  rotulo();
+  bitmaps();
+  temperatura();
+  pulsadores();
+
+  switch (pagina) {
+    case 0:
+      if (digitalRead(OnOff) == HIGH) {
+        digitalWrite(Out, HIGH);
+      }
+      else {
+        digitalWrite(Out, LOW);
+      }
+      voltajeColor();
+      corrienteColor();
+      potenciaColor();
+      tft.drawLine(0, 33, 160, 33, ST7735_CYAN);
+      voltajeCuenta();
+      corrienteCuenta();
+      break;
+
+    case 1:
+      voltajeCuenta();
+      corrienteCuenta();
+      PWM();
+      break;
+  }
 }
